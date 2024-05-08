@@ -2,8 +2,6 @@ import logging
 import subprocess
 
 from fastapi import FastAPI
-from api.endpoints.data_loading import data_loading
-from api.endpoints.database_lookup import database_lookup
 from env import get_env
 
 
@@ -27,8 +25,6 @@ def create_app():
         title="entrustment",
     )
 
-    app.include_router(data_loading)
-    app.include_router(database_lookup)
     # DB migrations
     subprocess.run(["alembic", "upgrade", "head"])
 
