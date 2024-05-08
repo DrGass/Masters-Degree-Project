@@ -24,7 +24,7 @@ def create_app():
         version="0.1.0",
         title="entrustment",
     )
-
+    # unnecessary code
     # DB migrations
     subprocess.run(["alembic", "upgrade", "head"])
 
