@@ -1,0 +1,15 @@
+alembic
+fastapi
+psycopg2
+pydantic
+pydantic-settings
+pydantic_core
+pytest
+python-dateutil
+python-dotenv
+python-multipart
+SQLAlchemy
+SQLAlchemy-Utils
+starlette
+uvicorn
+wait-for-it
