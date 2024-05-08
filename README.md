@@ -2,6 +2,9 @@
  
 It'll be an openCV app that will help patients do correct exercises.
 
+ # Starting Docker
+docker compose -f ./docker/docker-compose.yml -p entrustment-app --env-file ./backend/.env up --build
+
 Podręczna Fizjoterapia/Pomocnik Fizjoterapeuty - Aplikacja pomagająca pacjentom w poprawnym wykonywaniu ćwiczeń i w kontakcie z fizjoterapeutą.
 Handy Physiotherapy/Physiotherapist's Assistant - An application helping patients in performing exercises correctly and in contact with a physiotherapist.
 
