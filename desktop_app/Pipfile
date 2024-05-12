@@ -7,6 +7,7 @@ name = "pypi"
 opencv-python = "*"
 tensorflow = "*"
 matplotlib = "*"
+numpy = "*"
 
 [dev-packages]
 
