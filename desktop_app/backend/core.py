@@ -82,8 +82,8 @@ def render_window():
         ret, frame = cap.read()
         if not ret:
             break
-        model_path = "thunder_model_3.tflite"
-        # model_path = "lightning_model_3.tflite"
+        model_path = "models/thunder.tflite"
+        # model_path = "models/lightning.tflite"
         MoveNet_model = MoveNet(model_path)
         keypoints_with_scores = MoveNet_model.predict(frame)
 
