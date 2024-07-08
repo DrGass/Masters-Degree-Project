@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import pprint
 
 
 class MoveNet:
@@ -46,32 +47,31 @@ class MoveNet:
         self.interpreter.set_tensor(input_details[0]["index"], np.array(input_image))
         self.interpreter.invoke()
         keypoints_with_scores = self.interpreter.get_tensor(output_details[0]["index"])
-
         return keypoints_with_scores
 
 
-def draw_keypoints(frame, keypoint, confidence):
+def draw_keypoints(frame, keypoints, confidence_threshold):
     y, x, c = frame.shape
-    shaped = np.squeeze(np.multiply(keypoint, [y, x, 1]))
+    shaped = np.squeeze(np.multiply(keypoints, [y, x, 1]))
 
     for kp in shaped:
         ky, kx, kp_conf = kp
-        if kp_conf > confidence:
+        if kp_conf > confidence_threshold:
             cv2.circle(frame, (int(kx), int(ky)), 4, (0, 255, 0), -1)
     return frame
 
 
-def draw_connections(frame, keypoints_with_scores, edges, confidence=0.4):
+def draw_connections(frame, keypoints, edges, confidence_threshold):
     y, x, c = frame.shape
-    shaped = np.squeeze(np.multiply(keypoints_with_scores, [y, x, 1]))
+    shaped = np.squeeze(np.multiply(keypoints, [y, x, 1]))
 
     for edge, color in edges.items():
         p1, p2 = edge
         y1, x1, c1 = shaped[p1]
         y2, x2, c2 = shaped[p2]
 
-        if (c1 > confidence) & (c2 > confidence):
-            cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+        if (c1 > confidence_threshold) & (c2 > confidence_threshold):
+            cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
     return frame
 
 
@@ -82,8 +82,8 @@ def render_window():
         ret, frame = cap.read()
         if not ret:
             break
-        model_path = "models/thunder.tflite"
-        # model_path = "models/lightning.tflite"
+        # model_path = "models/thunder.tflite"
+        model_path = "models/lightning.tflite"
         MoveNet_model = MoveNet(model_path)
         keypoints_with_scores = MoveNet_model.predict(frame)
 
