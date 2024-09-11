@@ -78,11 +78,15 @@ def render_window():
     cap = cv2.VideoCapture(0)
     while cap.isOpened():
         ret, frame = cap.read()
+        h_diff = (frame.shape[1] - frame.shape[0]) // 2
         if not ret:
             break
+        frame = cv2.copyMakeBorder(
+            frame, h_diff, h_diff, 0, 0, cv2.BORDER_CONSTANT, None, value=0
+        )
+
         # model_path = "models/thunder.tflite"
-        # model_path = "models/lightning.tflite"
-        model_path = "models/lightning_float16.tflite"
+        model_path = "models/lightning.tflite"
         MoveNet_model = MoveNet(model_path)
         keypoints_with_scores = MoveNet_model.predict(frame)
 
