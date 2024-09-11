@@ -34,9 +34,7 @@ class MoveNet:
     def predict(self, frame):
         # Image reshaping
         img = frame.copy()
-        img = tf.image.resize_with_pad(
-            np.expand_dims(img, axis=0), self.amount, self.amount
-        )
+        img = tf.image.resize_with_pad(tf.expand_dims(img, axis=0), 192, 192)
         input_image = tf.cast(img, dtype=tf.float32)
 
         # Setup input and output
@@ -82,8 +80,9 @@ def render_window():
         ret, frame = cap.read()
         if not ret:
             break
-        model_path = "models/thunder.tflite"
+        # model_path = "models/thunder.tflite"
         # model_path = "models/lightning.tflite"
+        model_path = "models/lightning_float16.tflite"
         MoveNet_model = MoveNet(model_path)
         keypoints_with_scores = MoveNet_model.predict(frame)
 
