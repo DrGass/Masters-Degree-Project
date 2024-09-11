@@ -54,6 +54,7 @@ def draw_keypoints(frame, keypoints, confidence_threshold):
 
     for kp in shaped:
         ky, kx, kp_conf = kp
+        print(ky, kx, kp_conf)
         if kp_conf > confidence_threshold:
             cv2.circle(frame, (int(kx), int(ky)), 4, (0, 255, 0), -1)
     return frame
