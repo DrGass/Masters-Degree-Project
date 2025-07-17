@@ -72,6 +72,7 @@ def check_existing_setup():
         print("✅ MoveNet Thunder model found")
     else:
         print("❌ MoveNet Thunder model missing")
+        return False
 
     # Check core.py
     if os.path.exists("desktop_app/backend/core.py"):
