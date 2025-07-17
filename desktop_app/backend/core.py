@@ -12,10 +12,13 @@ class MoveNet:
     def __init__(self, model_path):
         self.interpreter = tf.lite.Interpreter(model_path)
         self.interpreter.allocate_tensors()
-        self.amount = 256 if "thunder" in model_path else 192
-
+        self.amount = 192 # Default input size for MoveNet Lightning 256 for thunder
+        self.current_repetition = []  # Current rep being recorded
+        self.completed_repetitions = []  # Complete reps for analysis
+        self.min_rep_frames = 48  # Minimum frames for a valid rep (2 seconds at 24fps)
+        self.max_rep_frames = 180  # Maximum frames for a valid rep (6 seconds at 30fps)
         # Add pose sequence buffer for AI analysis
-        self.pose_buffer = deque(maxlen=30)  # Store last 30 frames
+        self.pose_buffer = deque(maxlen=450)  # Store last 30 frames
         self.data_collection_mode = False
         self.current_session_data = []
 
