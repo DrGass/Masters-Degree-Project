@@ -65,7 +65,7 @@ class MoveNet:
         img = tf.image.resize_with_pad(
             tf.expand_dims(img, axis=0), self.amount, self.amount
         )
-        input_image = tf.cast(img, dtype=tf.float32)
+        input_image = tf.cast(img, dtype=tf.float32) / 255.0
 
         # Setup input and output
         input_details = self.interpreter.get_input_details()
@@ -87,15 +87,21 @@ class MoveNet:
 
     def _update_pose_buffer(self, keypoints):
         """Store keypoints in buffer for sequence analysis"""
-        # Extract and normalize keypoints
         shaped_keypoints = np.squeeze(keypoints)
-        if shaped_keypoints.shape[0] == 17:  # Ensure we have all keypoints
-            self.pose_buffer.append(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "keypoints": shaped_keypoints.tolist(),
-                }
-            )
+
+        # Always store the pose data, even if some keypoints are missing
+        # We'll handle missing keypoints during analysis
+        self.pose_buffer.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "keypoints": shaped_keypoints.tolist(),
+                "confidence_scores": (
+                    shaped_keypoints[:, 2].tolist()
+                    if len(shaped_keypoints.shape) > 1
+                    else []
+                ),
+            }
+        )
 
     def _store_session_data(self, keypoints, frame_shape):
         """Store data for training collection"""
