@@ -4,23 +4,34 @@ import cv2
 import matplotlib.pyplot as plt
 import pprint
 import json
+import os
 from datetime import datetime
 from collections import deque
+from repetition_detector import SquatDetector
 
 
 class MoveNet:
     def __init__(self, model_path):
         self.interpreter = tf.lite.Interpreter(model_path)
         self.interpreter.allocate_tensors()
-        self.amount = 192 # Default input size for MoveNet Lightning 256 for thunder
+        self.amount = 192  # Movenet Lightning input size
         self.current_repetition = []  # Current rep being recorded
         self.completed_repetitions = []  # Complete reps for analysis
         self.min_rep_frames = 48  # Minimum frames for a valid rep (2 seconds at 24fps)
         self.max_rep_frames = 180  # Maximum frames for a valid rep (6 seconds at 30fps)
-        # Add pose sequence buffer for AI analysis
-        self.pose_buffer = deque(maxlen=450)  # Store last 30 frames
-        self.data_collection_mode = False
+        self.pose_buffer = deque(maxlen=450)  # Store last 450 frames
+        self.data_collection_mode = True
         self.current_session_data = []
+
+        # Exercise detection capabilities
+        self.available_exercises = {
+            "squat": SquatDetector,
+            # Future exercises will be added here
+        }
+
+        self.current_exercise = None
+        self.exercise_detector = None
+        self.exercise_mode = False
 
         self.edges = {
             (0, 1): "m",
@@ -63,14 +74,12 @@ class MoveNet:
         }
 
     def predict(self, frame):
-        # Image reshaping - use self.amount for dynamic sizing
         img = frame.copy()
         img = tf.image.resize_with_pad(
             tf.expand_dims(img, axis=0), self.amount, self.amount
         )
         input_image = tf.cast(img, dtype=tf.float32)
 
-        # Setup input and output
         input_details = self.interpreter.get_input_details()
         output_details = self.interpreter.get_output_details()
 
@@ -82,11 +91,52 @@ class MoveNet:
         # Store in buffer for sequence analysis
         self._update_pose_buffer(keypoints_with_scores)
 
+        # Add repetition detection if in exercise mode
+        if self.exercise_mode and self.exercise_detector and self.current_exercise:
+            shaped_keypoints = np.squeeze(keypoints_with_scores)
+            # Run detection regardless of number of keypoints detected
+            state, rep_completed = self.exercise_detector.detect_squat_phase(
+                shaped_keypoints
+            )
+
+            if rep_completed:
+                print(
+                    f"✅ {self.current_exercise.title()} #{self.exercise_detector.rep_count} completed!"
+                )
+
         # Store for data collection if enabled
         if self.data_collection_mode:
             self._store_session_data(keypoints_with_scores, frame.shape)
 
         return keypoints_with_scores
+
+    def set_exercise_mode(self, exercise_type):
+        """Set the current exercise type and initialize detector"""
+        if exercise_type in self.available_exercises:
+            self.current_exercise = exercise_type
+            detector_class = self.available_exercises[exercise_type]
+            self.exercise_detector = detector_class()
+            self.exercise_mode = True
+            print(f"✅ Exercise mode set to: {exercise_type}")
+            return True
+        else:
+            print(f"❌ Exercise '{exercise_type}' not available")
+            return False
+
+    def disable_exercise_mode(self):
+        """Disable exercise detection mode"""
+        self.exercise_mode = False
+        self.current_exercise = None
+        self.exercise_detector = None
+        print("Exercise mode disabled")
+
+    def get_exercise_stats(self):
+        """Get current exercise statistics"""
+        if self.exercise_mode and self.exercise_detector:
+            stats = self.exercise_detector.get_rep_stats()
+            stats["exercise_type"] = self.current_exercise
+            return stats
+        return None
 
     def _update_pose_buffer(self, keypoints):
         """Store keypoints in buffer for sequence analysis"""
@@ -130,7 +180,12 @@ class MoveNet:
         if not self.current_session_data:
             return False
 
+        # Ensure data directory exists
+        data_dir = "../data/sessions"
+        os.makedirs(data_dir, exist_ok=True)
+
         filename = f"session_{self.current_exercise}_{self.current_quality}_{participant_id}_{rep_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filepath = os.path.join(data_dir, filename)
 
         session_data = {
             "metadata": {
@@ -143,11 +198,49 @@ class MoveNet:
             "poses": self.current_session_data,
         }
 
-        with open(f"training_data/{filename}", "w") as f:
+        with open(filepath, "w") as f:
             json.dump(session_data, f)
 
         self.current_session_data = []
         return True
+
+    def save_exercise_session(self, participant_id=None):
+        """Save completed exercise session with repetition data"""
+        if not self.exercise_mode or not self.exercise_detector:
+            return False
+
+        stats = self.get_exercise_stats()
+        if not stats or stats["total_reps"] == 0:
+            return False
+
+        # Ensure data directory exists
+        data_dir = "../data/sessions"
+        os.makedirs(data_dir, exist_ok=True)
+
+        participant_str = f"_{participant_id}" if participant_id else ""
+        filename = f"exercise_session_{self.current_exercise}{participant_str}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filepath = os.path.join(data_dir, filename)
+
+        session_data = {
+            "metadata": {
+                "exercise_type": self.current_exercise,
+                "participant_id": participant_id,
+                "session_date": datetime.now().isoformat(),
+                "total_repetitions": stats["total_reps"],
+                "average_duration": stats["average_duration"],
+                "session_duration_seconds": len(self.pose_buffer) / 24.0,  # Approximate
+            },
+            "repetitions": self.exercise_detector.completed_reps,
+            "summary": stats,
+        }
+
+        with open(filepath, "w") as f:
+            json.dump(session_data, f, indent=2)
+
+        print(f"💾 Session saved: {filepath}")
+        return True
+
+    # ...existing methods...
 
 
 def draw_keypoints(frame, keypoints, confidence_threshold):
@@ -188,101 +281,226 @@ def draw_connections(frame, keypoints, edges, confidence_threshold):
     return frame
 
 
-# Add to the render_window function:
-
-
 def render_window():
     cap = cv2.VideoCapture(0)
+
+    # Set camera resolution for better quality display
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     # Initialize models
     model_path = "models/lightning.tflite"
     movenet_model = MoveNet(model_path)
 
-    # Initialize exercise analyzer (optional - only if model exists)
-    try:
-        from exercise_analyzer import ExerciseFormAnalyzer
+    # Enable squat detection by default for testing
+    movenet_model.set_exercise_mode("squat")
 
-        form_analyzer = ExerciseFormAnalyzer("models/exercise_form_model.h5")
-        analysis_enabled = True
-    except:
-        form_analyzer = None
-        analysis_enabled = False
-        print("Exercise form analyzer not available")
+    import time
+
+    prev_time = time.time()
+    fps = 0
+    fps_history = []
+    target_fps = 24
+    frame_duration = 1.0 / target_fps
 
     while cap.isOpened():
+        loop_start = time.time()
         ret, frame = cap.read()
         if not ret:
             break
 
-        h_diff = (frame.shape[1] - frame.shape[0]) // 2
-        frame = cv2.copyMakeBorder(
-            frame, h_diff, h_diff, 0, 0, cv2.BORDER_CONSTANT, None, value=0
-        )
+        # Store original frame for display
+        display_frame = frame.copy()
 
-        # Get predictions
+        # Resize frame for processing (square aspect ratio for MoveNet)
+        h, w = frame.shape[:2]
+        h_pad = w_pad = 0  # Initialize padding values
+
+        if h != w:
+            # Make frame square by padding
+            max_dim = max(h, w)
+            h_pad = (max_dim - h) // 2
+            w_pad = (max_dim - w) // 2
+            frame = cv2.copyMakeBorder(
+                frame, h_pad, h_pad, w_pad, w_pad, cv2.BORDER_CONSTANT
+            )
+
+        # Get predictions (MoveNet processes at 192x192 internally)
         keypoints_with_scores = movenet_model.predict(frame)
 
-        # Analyze form if possible
-        form_result = None
-        if analysis_enabled and form_analyzer:
-            pose_sequence = movenet_model.get_pose_sequence()
-            if pose_sequence:
-                form_result = form_analyzer.analyze_form(pose_sequence)
+        # Scale keypoints back to display frame size
+        display_h, display_w = display_frame.shape[:2]
+        frame_h, frame_w = frame.shape[:2]
 
-        # Render keypoints
-        draw_keypoints(frame, keypoints_with_scores, 0.4)
+        # Adjust keypoints for display frame
+        scaled_keypoints = keypoints_with_scores.copy()
+        shaped_keypoints = np.squeeze(scaled_keypoints)
 
-        # Display analysis results
-        y_offset = 30
-        if form_result and "predicted_class" in form_result:
-            class_text = f"Form: {form_result['predicted_class']} ({form_result['confidence']:.2f})"
-            color = (
-                (0, 255, 0)
-                if form_result["predicted_class"] == "good"
-                else (
-                    (0, 165, 255)
-                    if form_result["predicted_class"] == "warning"
-                    else (0, 0, 255)
-                )
-            )
+        # Scale coordinates from padded frame to original display frame
+        for i in range(len(shaped_keypoints)):
+            # Convert from normalized coordinates to padded frame coordinates
+            y_padded = shaped_keypoints[i][0] * frame_h
+            x_padded = shaped_keypoints[i][1] * frame_w
+
+            # Remove padding offset
+            y_original = y_padded - h_pad
+            x_original = x_padded - w_pad
+
+            # Normalize to display frame
+            shaped_keypoints[i][0] = y_original / display_h
+            shaped_keypoints[i][1] = x_original / display_w
+
+        # Render keypoints on display frame
+        draw_keypoints(display_frame, np.expand_dims(shaped_keypoints, axis=0), 0.4)
+        draw_connections(
+            display_frame,
+            np.expand_dims(shaped_keypoints, axis=0),
+            movenet_model.edges,
+            0.4,
+        )
+
+        # Display exercise statistics on display frame
+        stats = movenet_model.get_exercise_stats()
+        if stats:
+            y_offset = 30
+
+            # Exercise type
+            exercise_text = f"Exercise: {stats['exercise_type'].title()}"
             cv2.putText(
-                frame,
-                class_text,
+                display_frame,
+                exercise_text,
+                (10, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 0),
+                2,
+            )
+            y_offset += 40
+
+            # Repetition counter
+            rep_text = f"Reps: {stats['total_reps']}"
+            cv2.putText(
+                display_frame,
+                rep_text,
+                (10, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                (0, 255, 0),
+                3,
+            )
+            y_offset += 40
+
+            # Current state
+            state_text = f"State: {stats['current_state']}"
+            state_colors = {
+                "standing": (255, 255, 255),
+                "descending": (0, 255, 255),
+                "ascending": (255, 165, 0),
+                "bottom": (255, 0, 255),
+            }
+            color = state_colors.get(stats["current_state"], (255, 255, 255))
+            cv2.putText(
+                display_frame,
+                state_text,
                 (10, y_offset),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 color,
                 2,
             )
-            y_offset += 30
+            y_offset += 35
 
-            feedback_text = form_result["feedback"]
+            # Tracking stability indicator
+            stability = stats.get("tracking_stability", 0)
+            stability_text = f"Tracking: {stability*100:.0f}%"
+            stability_color = (
+                (0, 255, 0)
+                if stability > 0.7
+                else (0, 165, 255) if stability > 0.4 else (0, 0, 255)
+            )
             cv2.putText(
-                frame,
-                feedback_text,
+                display_frame,
+                stability_text,
                 (10, y_offset),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (255, 255, 255),
+                stability_color,
                 2,
             )
+            y_offset += 30
+
+            # Average duration
+            if stats["total_reps"] > 0:
+                duration_text = f"Avg: {stats['average_duration']:.1f}s"
+                cv2.putText(
+                    display_frame,
+                    duration_text,
+                    (10, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2,
+                )
 
         # Display buffer status
         buffer_status = f"Buffer: {len(movenet_model.pose_buffer)}/{movenet_model.pose_buffer.maxlen}"
         cv2.putText(
-            frame,
+            display_frame,
             buffer_status,
-            (10, frame.shape[0] - 20),
+            (10, display_frame.shape[0] - 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             (255, 255, 255),
             1,
         )
 
-        cv2.imshow("MoveNet Lightning", frame)
+        # Calculate and display FPS
+        curr_time = time.time()
+        fps = 1.0 / (curr_time - prev_time)
+        prev_time = curr_time
+        fps_history.append(fps)
+        if len(fps_history) > 30:
+            fps_history.pop(0)
+        avg_fps = sum(fps_history) / len(fps_history)
+        cv2.putText(
+            display_frame,
+            f"FPS: {avg_fps:.1f}",
+            (display_frame.shape[1] - 120, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+        )
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        # Resize display frame for larger window (optional)
+        display_height = 800  # Larger display size
+        aspect_ratio = display_frame.shape[1] / display_frame.shape[0]
+        display_width = int(display_height * aspect_ratio)
+        display_frame_large = cv2.resize(display_frame, (display_width, display_height))
+
+        cv2.imshow("Rehabilitation Exercise Tracker", display_frame_large)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            # Save session before quitting
+            if movenet_model.exercise_mode and movenet_model.exercise_detector:
+                movenet_model.save_exercise_session()
             break
+        elif key == ord("r"):
+            # Reset repetition counter
+            if movenet_model.exercise_detector:
+                movenet_model.exercise_detector.reset_counter()
+                print("🔄 Repetition counter reset")
+        elif key == ord("s"):
+            # Manual save session
+            if movenet_model.exercise_mode and movenet_model.exercise_detector:
+                movenet_model.save_exercise_session()
+                print("💾 Session manually saved")
+
+        # Limit frame rate to 24 FPS for stable performance and consistent
+        elapsed = time.time() - loop_start
+        if elapsed < frame_duration:
+            time.sleep(frame_duration - elapsed)
 
     cap.release()
     cv2.destroyAllWindows()
